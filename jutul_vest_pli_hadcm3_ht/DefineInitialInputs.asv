@@ -1,0 +1,363 @@
+
+function [UserVar,CtrlVar,MeshBoundaryCoordinates]=DefineInitialInputs(UserVar,CtrlVar)
+
+
+%% Select the type of run by uncommenting one of the following options:
+UserVar.OutputExpName='jutul_slope_FC05_ice01_A1';
+% UserVar.OutputExpName='JutulMeshing';
+if isempty(UserVar) || ~isfield(UserVar,'RunType')
+    
+%     UserVar.RunType='Inverse-MatOpt';    
+    % UserVar.RunType='Inverse-ConjGrad';
+    % UserVar.RunType='Inverse-SteepestDesent';
+    % UserVar.RunType='Inverse-ConjGrad-FixPoint';
+%      UserVar.RunType='Forward-Diagnostic';
+   UserVar.RunType='Forward-Transient';
+%     UserVar.RunType='TestingMeshOptions';
+end
+
+% Domain
+CtrlVar.ReadInitialMesh=1;           % default 1
+CtrlVar.ReadInitialMeshFileName='MeshFileInitial.mat';
+UserVar.MeshOutlinePath = 'mesh_lines/footprint_jutul_slope.dat';
+UserVar.IOFilesPath = '/proj/bolinc/users/x_marma/ua_files';
+% Boundaries
+UserVar.GeometryInterpolant=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/BedMachine_GeometryInterpolant_jutul_slope.mat'];
+%UserVar.GeometryInterpolant=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/a20_b2_PD_steady_state_2d_geometry_jutul_slope.mat'];
+%UserVar.ThicknessInterpolant=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/a20_b2_PD_steady_state_2d_geometry_jutul_slope.mat'];
+
+UserVar.SurfaceVelocityInterpolant=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/Measures_SurfVelInterpolant_jutul_slope.mat'];
+%UserVar.SurfaceVelocityInterpolant=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/a20_b2_PD_steady_state_2d_surface_vels_jutul_slope.mat'];
+UserVar.CFile=[UserVar.IOFilesPath,'/InputAC/FC05_ctrl.mat']; 
+UserVar.AFile=[UserVar.IOFilesPath,'/InputAC/FA_ctrl.mat'];
+CtrlVar.SlidingLaw='Weertman'; %{'Weertman'|'Umbi'|'Cornford'} default: Weertman
+
+
+% Forcings
+UserVar.SMB.File=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/racmo_smb_jutul_slope.mat'];
+% UserVar.SMB.File=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/a20_b2_LGM_coupled-CESM_2d_as_perp_domain_jutul_slope.mat'];
+%UserVar.SMB.File=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/a20_b2_plio_steady_state_PDinit_as_perp_domain_jutul_slope.mat'];
+%UserVar.SMB.File=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/a20_b2_PD_steady_state_2d_smb_jutul_slope.mat'];
+%UserVar.Qbm.File=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/a20_b2_PD_steady_state_2d_qbm_jutul_slope.mat'];
+UserVar.Temp.ReadFromFile = 0;
+
+if ~isfile(UserVar.GeometryInterpolant) || ~isfile(UserVar.SurfaceVelocityInterpolant)     
+     fprintf('\n This run requires the additional input files: \n %s \n %s  \n \n',UserVar.GeometryInterpolant,UserVar.SurfaceVelocityInterpolant)          
+end
+
+%% Duration
+
+CtrlVar.dt=0.01;
+CtrlVar.time=0;
+CtrlVar.TotalTime=1000;
+CtrlVar.TotalNumberOfForwardRunSteps=10e4;
+
+CtrlVar.DefineOutputsDt = 100;       % every years
+
+%% Run-type specific
+CtrlVar.Experiment=UserVar.RunType;
+
+switch UserVar.RunType
+    
+    case {'Inverse-MatOpt','Inverse-ConjGrad','Inverse-MatOpt-FixPoint','Inverse-ConjGrad-FixPoint','Inverse-SteepestDesent'}
+        
+        CtrlVar.InverseRun=1;
+        CtrlVar.Restart=0;        
+        CtrlVar.Inverse.InfoLevel=1;
+        CtrlVar.InfoLevelNonLinIt=0; % set to zero when you know everything is working well - avoid clutter
+        CtrlVar.InfoLevel=0;
+        UserVar.Slipperiness.ReadFromFile=0;
+        UserVar.AGlen.ReadFromFile=0;
+        UserVar.Temp.ReadFromFile=0;
+        CtrlVar.ReadInitialMesh=1; % originally 1        
+        CtrlVar.AdaptMesh=0;        
+        
+        CtrlVar.Inverse.Iterations=2500; % originally 5 (lol)
+        CtrlVar.Inverse.InvertFor='logAGlenlogC' ; % {'logAGlenlogC','C','logC','AGlen','logAGlen'}
+        CtrlVar.Inverse.Regularize.Field=CtrlVar.Inverse.InvertFor;               
+
+        CtrlVar.Inverse.AdjointGradientPreMultiplier='I'; % {'I','M'}
+        
+        CtrlVar.Inverse.Regularize.logC.ga=1;
+        CtrlVar.Inverse.Regularize.logC.gs=1e4; % "default": 1e5
+        
+        CtrlVar.Inverse.Regularize.logAGlen.ga=1;
+        CtrlVar.Inverse.Regularize.logAGlen.gs=1e4; % "default": 1e5
+        % gs from 1e3 to 1e5
+        
+        % Use '-uv-' for the classical, '-uv-dhdt-' for Sebastian's way to reduce drift
+        CtrlVar.Inverse.Measurements='-uv-dhdt-';
+        
+                        
+        if contains(UserVar.RunType,'FixPoint')
+            
+            % FixPoint inversion is an ad-hoc method of estimating the gradient of the cost function with respect to C.
+            % It can produce quite good estimates for C using just one or two inversion iterations, but then typically stagnates.
+            % The FixPoint method can often be used right at the start of an inversion to get a reasonably good C estimate,
+            % after which in a restart step one can switch to gradient calculation using adjoint 
+            CtrlVar.Inverse.DataMisfit.GradientCalculation='FixPoint' ;
+            CtrlVar.Inverse.InvertFor='logC' ;
+            CtrlVar.Inverse.Iterations=1;
+            CtrlVar.Inverse.Regularize.Field=CtrlVar.Inverse.InvertFor;
+          
+        end
+        
+        
+    case 'Forward-Transient'
+        
+        CtrlVar.InverseRun=0;
+        CtrlVar.TimeDependentRun = 1;
+        CtrlVar.Restart          = 0; % default 0
+        CtrlVar.ResetTime        = 0;
+        
+        UserVar.SeaLevelStart     = 0; % PD sea level
+%         UserVar.SeaLevelEnd       = -128; % LGM sea level
+%         UserVar.SeaLevelStartTime = 1000;   % year
+%         UserVar.SeaLevelEndTime   = 4000; % year       
+        
+        UserVar.applyDeltaBedrock=1;
+        UserVar.deltaBedrockFile=[UserVar.IOFilesPath,'/Interpolants/sicopolis_dzl_lgm.mat'];
+        
+        CtrlVar.InfoLevelNonLinIt=1;
+        UserVar.Slipperiness.ReadFromFile=1; % default 1 (if no CFile provided, reads C-Estimate.mat)
+        UserVar.AGlen.ReadFromFile=1;        % default 0? (if no AFile provided, reads AGlen-Estimate.mat)
+        UserVar.Temp.ReadFromFile=0;
+        
+        CtrlVar.ReadInitialMesh=1;           % default 1
+        CtrlVar.AdaptMeshInitial=0;
+        CtrlVar.AdaptMesh=1;                 % default 0
+        CtrlVar.AdaptMeshRunStepInterval=0 ; CtrlVar.AdaptMeshTimeInterval=2  ;
+        CtrlVar.AdaptMeshMaxIterations=5;
+                            
+        UserVar.SMB.ReadFromFile=1;
+        
+%         UserVar.SMB.TimeInit=1000;
+%         UserVar.SMB.TimeEnd=3000;
+%         UserVar.SMB.TargetFile=[UserVar.IOFilesPath,'/Interpolants/Jutulstraumen/slope_extent/a20_b2_LGM_coupled-CESM_2d_as_perp_domain_jutul_slope.mat'];
+        
+%         UserVar.Qbm.Caving=0;
+%         CtrlVar.MassBalanceGeometryFeedback=3;
+%         UserVar.CalvingThreshold=50;
+        UserVar.Qbm.Mode='None'; % '{'ReadFromFile'|'Quadratic'|'PICO'}
+        UserVar.Qbm.Temp0 = -1.65;                                    
+        UserVar.Qbm.GLenhance = 0;
+        UserVar.Qbm.GLenhanceFactor=1;
+        
+        if CtrlVar.Restart==1
+            CtrlVar.NameOfRestartFiletoRead=[UserVar.IOFilesPath,'/ResultsFiles/Restart-jutul_slope_FC05_ice01_A1-Forward-Transient-0100000'];
+%             CtrlVar.NameOfRestartFiletoRead=[UserVar.IOFilesPath,'/ResultsFiles/Restart-jutul_slope_FC05_ice02_A1-Forward-Transient-0400000'];
+%             CtrlVar.NameOfRestartFiletoRead=[UserVar.IOFilesPath,'/ResultsFiles/Restart-jutul_slope_FC05_ice03_A1-Forward-Transient-0500000'];
+%             CtrlVar.NameOfRestartFiletoRead=[UserVar.IOFilesPath,'/ResultsFiles/Restart-jutul_slope_FC15sicolgmss2c-Forward-Transient-1000000'];
+%             CtrlVar.ReadInitialMeshFileName='MeshFileAdapt.mat'; % otherwise I'll forget to switch!
+            CtrlVar.ReadInitialMesh=0;
+            CtrlVar.AdaptMesh=1;
+            CtrlVar.AdaptMeshInitial=0;
+            CtrlVar.AdaptMeshTimeInterval=10;
+%             CtrlVar.AdaptMeshTimeInterval=200; % for restarting from sicolgm
+        end
+                        
+        fname_restart=sprintf('%s/ResultsFiles/Restart-%s-%s-%07i',UserVar.IOFilesPath,UserVar.OutputExpName,UserVar.RunType,round(100*CtrlVar.TotalTime));
+        CtrlVar.NameOfRestartFiletoWrite=fname_restart;
+        
+    case 'Forward-Diagnostic'
+               
+        CtrlVar.InverseRun=0;
+        CtrlVar.TimeDependentRun=0;
+        CtrlVar.Restart=0;
+        CtrlVar.InfoLevelNonLinIt=1;
+        
+        CtrlVar.TotalNumberOfForwardRunSteps=1e1; 
+        
+        UserVar.Slipperiness.ReadFromFile=0; % default 1
+        UserVar.AGlen.ReadFromFile=0;
+        UserVar.Temp.ReadFromFile=0;
+                
+        
+        CtrlVar.PlotMesh=0; 
+        CtrlVar.doRemeshPlots=0;
+        
+        CtrlVar.AdaptMesh=0;                 % default 0                
+        CtrlVar.AdaptMeshRunStepInterval=20; CtrlVar.AdaptMeshTimeInterval=0;
+        CtrlVar.AdaptMeshMaxIterations=5;
+        
+        % Testing SMB on the diagnostic run
+        UserVar.SMB.ReadFromFile=1;        
+        UserVar.Qbm.Mode='ReadFromFile'; 
+        UserVar.Qbm.Temp0 = -1.65;
+        UserVar.Qbm.GLenhance = 0;
+        UserVar.Qbm.GLenhanceFactor=1;
+        
+    case 'TestingMeshOptions'
+        
+        CtrlVar.TimeDependentRun=0;  % {0|1} if true (i.e. set to 1) then the run is a forward transient one, if not
+        CtrlVar.InverseRun=0;
+        CtrlVar.Restart=0;
+        CtrlVar.ReadInitialMesh=0;
+        CtrlVar.AdaptMesh=1;
+        UserVar.Slipperiness.ReadFromFile=0; % default 1
+        UserVar.AGlen.ReadFromFile=0;        % default 1
+        CtrlVar.AdaptMesh=1;
+        CtrlVar.AdaptMeshInitial=1  ;       % remesh in first iteration (Itime=1)  even if mod(Itime,CtrlVar.AdaptMeshRunStepInterval)~=0.
+        CtrlVar.AdaptMeshAndThenStop=0;    % if true, then mesh will be adapted but no further calculations performed
+        % useful, for example, when trying out different remeshing options (then use CtrlVar.doAdaptMeshPlots=1 to get plots)
+        CtrlVar.AdaptMeshMaxIterations=20;
+        CtrlVar.InfoLevelAdaptiveMeshing=0;
+        CtrlVar.TotalNumberOfForwardRunSteps=10; 
+        
+        CtrlVar.doAdaptMeshPlots=1; %originally 5
+        CtrlVar.doRemeshPlots=1;
+        
+        CtrlVar.SaveInitialMeshFileName='MeshFileNoRef.mat';
+
+end
+
+% Element type
+CtrlVar.TriNodes=3 ;
+
+
+%%
+CtrlVar.doplots=1;
+%CtrlVar.PlotMesh=0;  %originally 0
+CtrlVar.PlotBCs=0 ;
+CtrlVar.PlotXYscale=1000;
+
+
+%% Meshing 
+
+
+CtrlVar.MeshRefinementMethod='explicit:local:newest vertex bisection';   
+%CtrlVar.MeshRefinementMethod='explicit:local:red-green';
+%CtrlVar.MeshRefinementMethod='explicit:global';   
+
+%CtrlVar.MeshGenerator='gmsh' ; % 'mesh2d';
+CtrlVar.MeshGenerator='mesh2d' ; % 'mesh2d';
+CtrlVar.GmshMeshingAlgorithm=8; 
+CtrlVar.MeshSizeMax=20e3;
+CtrlVar.MeshSize=CtrlVar.MeshSizeMax/2;
+CtrlVar.MeshSizeMin=500;
+UserVar.MeshSizeIceShelves=5e3;
+CtrlVar.MaxNumberOfElements=120e3;
+
+MeshBoundaryCoordinates=CreateMeshBoundaryCoordinates(CtrlVar,UserVar.MeshOutlinePath);
+
+CtrlVar.SaveAdaptMeshFileName='MeshFileAdapt';    %  file name for saving adapt mesh. If left empty, no file is written
+%CtrlVar.AdaptMeshInitial=1  ;     % remesh in first iteration (Itime=1)  even if mod(Itime,CtrlVar.AdaptMeshRunStepInterval)~=0.
+% CtrlVar.AdaptMeshAndThenStop=1;  % if true, then mesh will be adapted but no further calculations performed
+                                   % useful, for example, when trying out different remeshing options (then use CtrlVar.doAdaptMeshPlots=1 to get plots)
+% CtrlVar.AdaptMeshMaxIterations=10;  %originally 5, used 10 to remesh
+% CtrlVar.AdaptMeshRunStepInterval=10 ; % originally 1, remesh whenever mod(Itime,CtrlVar.AdaptMeshRunStepInterval)==0
+
+
+
+I=1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Name='thickness gradient';
+CtrlVar.ExplicitMeshRefinementCriteria(I).Scale=0.01; % default: 0.01
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMin=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMax=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).p=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).InfoLevel=1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Use=false;
+
+I=I+1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Name='effective strain rates';
+CtrlVar.ExplicitMeshRefinementCriteria(I).Scale=0.01; % default: 0.01, but worked well for 0.005
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMin=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMax=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).p=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).InfoLevel=1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Use=true;
+
+
+I=I+1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Name='flotation';
+CtrlVar.ExplicitMeshRefinementCriteria(I).Scale=0.001;
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMin=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMax=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).p=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).InfoLevel=1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Use=false;
+
+I=I+1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Name='upper surface gradient';
+CtrlVar.ExplicitMeshRefinementCriteria(I).Scale=0.01;
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMin=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMax=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).p=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).InfoLevel=1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Use=false;
+
+I=I+1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Name='lower surface gradient';
+CtrlVar.ExplicitMeshRefinementCriteria(I).Scale=0.01;
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMin=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).EleMax=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).p=[];
+CtrlVar.ExplicitMeshRefinementCriteria(I).InfoLevel=1;
+CtrlVar.ExplicitMeshRefinementCriteria(I).Use=true;
+
+
+% Grounding Line Refinement (AdaptMesh must be set to true, and MeshSizeMin has higher priority!)
+CtrlVar.MeshAdapt.GLrange=[4000 1000 ; 2000 500];
+%%
+                                                        
+%%  Bounds on C and AGlen
+%CtrlVar.AGlenmin=1e-10; CtrlVar.AGlenmax=1e-5;
+%CtrlVar.Cmin=1e-6;  CtrlVar.Cmax=1e20;        
+%CtrlVar.CisElementBased=0;   
+%CtrlVar.AGlenisElementBased=0;   
+
+
+%% Testing adjoint parameters, start:
+CtrlVar.Inverse.TestAdjoint.isTrue=0; % If true then perform a brute force calculation 
+                                      % of the directional derivative of the objective function.  
+CtrlVar.Inverse.TestAdjoint.FiniteDifferenceType='second-order' ; % {'central','forward'}
+CtrlVar.Inverse.TestAdjoint.FiniteDifferenceStepSize=1e-8 ;
+CtrlVar.Inverse.TestAdjoint.iRange=[100,121] ;  % range of nodes/elements over which brute force gradient is to be calculated.
+                                         % if left empty, values are calulated for every node/element within the mesh. 
+                                         % If set to for example [1,10,45] values are calculated for these three
+                                         % nodes/elements.
+% end, testing adjoint parameters. 
+
+
+if contains(UserVar.RunType,'MatOpt')
+    CtrlVar.Inverse.MinimisationMethod='MatlabOptimization';
+else
+    CtrlVar.Inverse.MinimisationMethod='UaOptimization';
+    if contains(UserVar.RunType,'ConjGrad')
+        CtrlVar.Inverse.GradientUpgradeMethod='ConjGrad' ; %{'SteepestDecent','ConjGrad'}
+    else
+        CtrlVar.Inverse.GradientUpgradeMethod='SteepestDecent' ; %{'SteepestDecent','ConjGrad'}
+    end
+    
+end
+
+
+
+%%
+UserVar.AddDataErrors=0;
+
+%%
+CtrlVar.ThicknessConstraints=0;         % active-set method, most correct to use - has convergence issues
+CtrlVar.ThicknessConstraintsItMax=1;    % limits the number of iterations
+CtrlVar.ResetThicknessToMinThickness=1; % worst method to use, but might be needed
+CtrlVar.ThickMin=1;                    % default was 50
+CtrlVar.ThicknessBarrier=0;             % to be used with the active-set method to improve convergence
+%%
+filename=sprintf('IR-%s-%s-Nod%i-%s-%s-Cga%f-Cgs%f-Aga%f-Ags%f-%i-%i-%s',...
+    UserVar.RunType,...
+    CtrlVar.Inverse.MinimisationMethod,...
+    CtrlVar.TriNodes,...
+    CtrlVar.Inverse.AdjointGradientPreMultiplier,...
+    CtrlVar.Inverse.DataMisfit.GradientCalculation,...
+    CtrlVar.Inverse.Regularize.logC.ga,...
+    CtrlVar.Inverse.Regularize.logC.gs,...
+    CtrlVar.Inverse.Regularize.logAGlen.ga,...
+    CtrlVar.Inverse.Regularize.logAGlen.gs,...
+    CtrlVar.CisElementBased,...
+    CtrlVar.AGlenisElementBased,...
+    CtrlVar.Inverse.InvertFor);
+filename=replace(filename,'.','k');
+CtrlVar.Inverse.NameOfRestartOutputFile=filename;
+CtrlVar.Inverse.NameOfRestartInputFile=CtrlVar.Inverse.NameOfRestartOutputFile;
+
+end
