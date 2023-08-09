@@ -8,6 +8,7 @@ This repository contains three folders:
     - `jutul_slope_*` refers to the smaller domain, focused on Jutulstraumen
     - `jutul_vest_*` refers to the larger domain, which encompasses Veststraumen
     - `*_pli_*` denotes experiments for the Jutulstraumen domain under Pliocene forcing
+    - `*_pd_ref_*` refers to the control present-day simulations
     - `*_proj_*` denotes experiments using modern-day subglacial topography and different basal melting and sea-level rise scenarios
 
 
