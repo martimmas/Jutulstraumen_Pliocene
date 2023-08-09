@@ -1,5 +1,7 @@
 # Model configuration files for Mas e Braga et al. (2023, Comms Earth & Environment)
 
+[![DOI](https://zenodo.org/badge/676512434.svg)](https://zenodo.org/badge/latestdoi/676512434)
+
 This repository contains three folders:
 
 - **InputAC:** inverted fields for basal sliding (FC*) and ice rheology (FA*) used in each experiment
